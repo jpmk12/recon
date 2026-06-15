@@ -1,4 +1,5 @@
 "use client";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 type Settings = {
@@ -10,10 +11,12 @@ type Settings = {
 };
 
 export default function SettingsForm({ initial }: { initial: Settings }) {
+  const router = useRouter();
   const [s, setS] = useState(initial);
   const [state, setState] = useState<"idle" | "saving" | "saved" | "err">(
     "idle"
   );
+  const [resetting, setResetting] = useState(false);
 
   async function save() {
     setState("saving");
@@ -26,11 +29,30 @@ export default function SettingsForm({ initial }: { initial: Settings }) {
     if (r.ok) setTimeout(() => setState("idle"), 1200);
   }
 
+  async function resetAll() {
+    const ok = window.confirm(
+      "Delete every device, port, scan, event, and issue? Your settings (subnets, schedule, nmap args) are kept. This cannot be undone."
+    );
+    if (!ok) return;
+    const confirm2 = window.prompt('Type "RESET" to confirm.');
+    if (confirm2 !== "RESET") return;
+    setResetting(true);
+    const r = await fetch("/api/reset", { method: "POST" });
+    setResetting(false);
+    if (r.ok) {
+      router.refresh();
+      alert("All device data cleared.");
+    } else {
+      alert("Reset failed.");
+    }
+  }
+
   function set<K extends keyof Settings>(k: K, v: Settings[K]) {
     setS((cur) => ({ ...cur, [k]: v }));
   }
 
   return (
+    <div className="space-y-6">
     <div className="card p-6 space-y-5">
       <Field
         label="Subnets to scan"
@@ -93,6 +115,30 @@ export default function SettingsForm({ initial }: { initial: Settings }) {
           {state === "saving" ? "Saving…" : "Save settings"}
         </button>
       </div>
+    </div>
+
+    <div className="card p-6 border-danger/40">
+      <div className="text-sm uppercase tracking-wider text-muted mb-2">
+        Danger zone
+      </div>
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div>
+          <div className="text-sm font-medium">Clear all device data</div>
+          <p className="text-xs text-muted mt-1 max-w-xl">
+            Wipes every host, port, scan, event, and issue — useful after
+            removing the sample-data seed, or to start fresh. Your settings
+            stay put.
+          </p>
+        </div>
+        <button
+          onClick={resetAll}
+          disabled={resetting}
+          className="btn border-danger/40 text-danger hover:border-danger hover:text-danger"
+        >
+          {resetting ? "Clearing…" : "Clear all data"}
+        </button>
+      </div>
+    </div>
     </div>
   );
 }

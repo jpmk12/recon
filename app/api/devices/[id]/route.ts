@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { updateHostMeta } from "@/lib/queries";
+import { deleteHost, updateHostMeta } from "@/lib/queries";
 import { z } from "zod";
 
 export const runtime = "nodejs";
@@ -19,5 +19,13 @@ export async function PATCH(
     return NextResponse.json({ error: parsed.error.message }, { status: 400 });
   }
   updateHostMeta(Number(params.id), parsed.data);
+  return NextResponse.json({ ok: true });
+}
+
+export async function DELETE(
+  _req: Request,
+  { params }: { params: { id: string } }
+) {
+  deleteHost(Number(params.id));
   return NextResponse.json({ ok: true });
 }

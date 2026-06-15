@@ -112,3 +112,19 @@ export function updateHostMeta(
     id
   );
 }
+
+export function deleteHost(id: number) {
+  db.prepare("DELETE FROM hosts WHERE id=?").run(id);
+}
+
+export function resetAllData() {
+  db.transaction(() => {
+    db.prepare("DELETE FROM issues").run();
+    db.prepare("DELETE FROM events").run();
+    db.prepare("DELETE FROM port_scripts").run();
+    db.prepare("DELETE FROM host_scripts").run();
+    db.prepare("DELETE FROM ports").run();
+    db.prepare("DELETE FROM hosts").run();
+    db.prepare("DELETE FROM scans").run();
+  })();
+}

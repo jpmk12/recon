@@ -126,6 +126,7 @@ export default function DeviceDetailPage({
           </h2>
           <HostMetaEditor
             id={host.id}
+            ip={host.ip}
             label={host.label ?? ""}
             notes={host.notes ?? ""}
           />

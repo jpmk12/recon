@@ -4,10 +4,12 @@ import { useState } from "react";
 
 export default function HostMetaEditor({
   id,
+  ip,
   label,
   notes,
 }: {
   id: number;
+  ip: string;
   label: string;
   notes: string;
 }) {
@@ -17,6 +19,7 @@ export default function HostMetaEditor({
   const [state, setState] = useState<"idle" | "saving" | "saved" | "err">(
     "idle"
   );
+  const [deleting, setDeleting] = useState(false);
 
   async function save() {
     setState("saving");
@@ -31,6 +34,22 @@ export default function HostMetaEditor({
       setTimeout(() => setState("idle"), 1200);
     } else {
       setState("err");
+    }
+  }
+
+  async function remove() {
+    const ok = window.confirm(
+      `Delete ${ip}? This removes the host plus all of its ports, scripts, history, and issues. It will reappear next scan if still online.`
+    );
+    if (!ok) return;
+    setDeleting(true);
+    const r = await fetch(`/api/devices/${id}`, { method: "DELETE" });
+    if (r.ok) {
+      router.push("/devices");
+      router.refresh();
+    } else {
+      setDeleting(false);
+      alert("Delete failed");
     }
   }
 
@@ -69,6 +88,23 @@ export default function HostMetaEditor({
           ? "Failed"
           : "Save"}
       </button>
+
+      <div className="pt-3 mt-3 border-t border-border">
+        <div className="text-xs uppercase tracking-wider text-muted mb-2">
+          Danger zone
+        </div>
+        <button
+          onClick={remove}
+          disabled={deleting}
+          className="btn w-full border-danger/40 text-danger hover:border-danger hover:text-danger"
+        >
+          {deleting ? "Deleting…" : "Delete this device"}
+        </button>
+        <p className="text-xs text-muted mt-2">
+          Removes the host record. If the device is still online it will be
+          re-discovered on the next scan.
+        </p>
+      </div>
     </div>
   );
 }
