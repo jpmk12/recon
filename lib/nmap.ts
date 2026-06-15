@@ -3,6 +3,9 @@ import { parseStringPromise } from "xml2js";
 import fs from "node:fs";
 import path from "node:path";
 import { db, getSetting } from "./db";
+import { detectIssuesForHost, reconcileStateIssues } from "./detectors";
+
+export type ParsedScript = { id: string; output: string };
 
 export type ParsedHost = {
   ip: string;
@@ -12,6 +15,7 @@ export type ParsedHost = {
   os: string | null;
   status: "up" | "down";
   ports: ParsedPort[];
+  scripts: ParsedScript[];
 };
 
 export type ParsedPort = {
@@ -21,7 +25,15 @@ export type ParsedPort = {
   service: string | null;
   product: string | null;
   version: string | null;
+  scripts: ParsedScript[];
 };
+
+function readScripts(node: { script?: { $: { id: string; output?: string } }[] }): ParsedScript[] {
+  return (node.script ?? []).map((s) => ({
+    id: s.$.id,
+    output: s.$.output ?? "",
+  }));
+}
 
 export async function parseNmapXml(xml: string): Promise<ParsedHost[]> {
   const data = await parseStringPromise(xml, { explicitArray: true });
@@ -42,11 +54,11 @@ export async function parseNmapXml(xml: string): Promise<ParsedHost[]> {
       }
     }
     if (!ip) continue;
-    const hostname =
-      h.hostnames?.[0]?.hostname?.[0]?.$?.name ?? null;
-    let os: string | null = null;
-    const osMatch = h.os?.[0]?.osmatch?.[0]?.$?.name;
-    if (osMatch) os = osMatch;
+    const hostname = h.hostnames?.[0]?.hostname?.[0]?.$?.name ?? null;
+    const os = h.os?.[0]?.osmatch?.[0]?.$?.name ?? null;
+    const hostScripts: ParsedScript[] = h.hostscript?.[0]
+      ? readScripts(h.hostscript[0])
+      : [];
     const ports: ParsedPort[] = [];
     const portList = h.ports?.[0]?.port ?? [];
     for (const p of portList) {
@@ -57,9 +69,10 @@ export async function parseNmapXml(xml: string): Promise<ParsedHost[]> {
         service: p.service?.[0]?.$?.name ?? null,
         product: p.service?.[0]?.$?.product ?? null,
         version: p.service?.[0]?.$?.version ?? null,
+        scripts: readScripts(p),
       });
     }
-    out.push({ ip, hostname, mac, vendor, os, status, ports });
+    out.push({ ip, hostname, mac, vendor, os, status, ports, scripts: hostScripts });
   }
   return out;
 }
@@ -122,12 +135,26 @@ export function applyScan(
     UPDATE ports SET state=@state, service=@service, product=@product, version=@version,
       last_seen=@now, is_open=@is_open WHERE id=@id
   `);
+  const upsertPortScript = db.prepare(`
+    INSERT INTO port_scripts (port_id, script_id, output, updated_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(port_id, script_id) DO UPDATE SET output=excluded.output, updated_at=excluded.updated_at
+  `);
+  const upsertHostScript = db.prepare(`
+    INSERT INTO host_scripts (host_id, script_id, output, updated_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(host_id, script_id) DO UPDATE SET output=excluded.output, updated_at=excluded.updated_at
+  `);
   const closeMissingPorts = db.prepare(`
     UPDATE ports SET is_open=0, state='closed', last_seen=? WHERE host_id=? AND is_open=1 AND id NOT IN (SELECT value FROM json_each(?))
   `);
   const insertEvent = db.prepare(
     "INSERT INTO events (scan_id, host_id, kind, detail, at) VALUES (?, ?, ?, ?, ?)"
   );
+  const insertNewDeviceIssue = db.prepare(`
+    INSERT OR IGNORE INTO issues (host_id, port_id, code, severity, title, detail, kind, first_seen, last_seen)
+    VALUES (?, 0, 'device.new', 'medium', 'Unknown device detected', ?, 'event', ?, ?)
+  `);
 
   let up = 0;
   const tx = db.transaction((hostList: ParsedHost[]) => {
@@ -150,6 +177,12 @@ export function applyScan(
       const host_id = hostRow.id;
       if (!prev) {
         insertEvent.run(scanId, host_id, "host_new", `IP ${h.ip} discovered`, now);
+        insertNewDeviceIssue.run(
+          host_id,
+          `${h.ip}${h.hostname ? " (" + h.hostname + ")" : ""}${h.vendor ? " · " + h.vendor : ""}`,
+          now,
+          now
+        );
       } else if (prev.is_up !== is_up) {
         insertEvent.run(
           scanId,
@@ -158,6 +191,10 @@ export function applyScan(
           `IP ${h.ip} ${is_up ? "came online" : "went offline"}`,
           now
         );
+      }
+
+      for (const s of h.scripts) {
+        upsertHostScript.run(host_id, s.id, s.output, now);
       }
 
       const seenPortIds: number[] = [];
@@ -173,6 +210,7 @@ export function applyScan(
               is_open: number;
             }
           | undefined;
+        let portId: number;
         if (!prevPort) {
           insertPort.run({
             host_id,
@@ -186,7 +224,7 @@ export function applyScan(
             is_open,
           });
           const row = getPort.get(host_id, p.port, p.protocol) as { id: number };
-          seenPortIds.push(row.id);
+          portId = row.id;
           if (is_open) {
             insertEvent.run(
               scanId,
@@ -206,7 +244,7 @@ export function applyScan(
             now,
             is_open,
           });
-          seenPortIds.push(prevPort.id);
+          portId = prevPort.id;
           if (prevPort.is_open !== is_open) {
             insertEvent.run(
               scanId,
@@ -231,8 +269,15 @@ export function applyScan(
             );
           }
         }
+        seenPortIds.push(portId);
+        for (const s of p.scripts) {
+          upsertPortScript.run(portId, s.id, s.output, now);
+        }
       }
       closeMissingPorts.run(now, host_id, JSON.stringify(seenPortIds));
+
+      const detected = detectIssuesForHost(host_id);
+      reconcileStateIssues(host_id, detected, now);
     }
   });
   tx(hosts);

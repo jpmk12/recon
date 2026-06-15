@@ -5,9 +5,11 @@ import {
   listEventsForHost,
   listPorts,
 } from "@/lib/queries";
+import { listOpenIssuesForHost } from "@/lib/issues";
 import EventRow from "@/components/EventRow";
 import HostMetaEditor from "@/components/HostMetaEditor";
 import PortBadge from "@/components/PortBadge";
+import IssueList from "@/components/IssueList";
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +26,7 @@ export default function DeviceDetailPage({
   if (!host) notFound();
   const ports = listPorts(host.id);
   const events = listEventsForHost(host.id, 100);
+  const issues = listOpenIssuesForHost(host.id);
   return (
     <div className="p-8 max-w-7xl">
       <Link href="/devices" className="text-xs text-muted hover:text-accent">
@@ -41,6 +44,11 @@ export default function DeviceDetailPage({
             {host.label && (
               <span className="tag border-accent text-accent">{host.label}</span>
             )}
+            {issues.length > 0 && (
+              <span className="tag border-danger text-danger">
+                {issues.length} issue{issues.length === 1 ? "" : "s"}
+              </span>
+            )}
           </div>
           <p className="text-sm text-muted mt-1">
             {host.hostname ?? "no hostname"} ·{" "}
@@ -56,6 +64,15 @@ export default function DeviceDetailPage({
 
       <div className="grid grid-cols-3 gap-4">
         <div className="col-span-2 space-y-4">
+          {issues.length > 0 && (
+            <div className="card p-5 border-danger/40">
+              <h2 className="text-sm uppercase tracking-wider text-muted mb-4">
+                Issues
+              </h2>
+              <IssueList issues={issues} showHost={false} />
+            </div>
+          )}
+
           <div className="card p-5">
             <h2 className="text-sm uppercase tracking-wider text-muted mb-4">
               Ports & services

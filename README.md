@@ -13,9 +13,10 @@ scan history, change detection, and per-device notes.
 
 ## Features
 
-- **Dashboard** — hosts up, open ports, services breakdown, top vendors, recent changes.
-- **Devices** — searchable table (IP, hostname, MAC, vendor, OS, label, service, port). Per-device detail page with ports, full history, and editable notes/label.
-- **Scans** — manual "Scan now" + cron-scheduled scans. History with status, duration, and host counts. Live status polling while a scan is running.
+- **Dashboard** — hosts up, open ports, services breakdown, top vendors, open issues by severity, recent changes.
+- **Devices** — searchable table (IP, hostname, MAC, vendor, OS, label, service, port). Per-device detail page with ports, full history, open issues, and editable notes/label.
+- **Issues** — problems detected from nmap NSE script output and service heuristics: known CVEs (via `vulners`), expired/expiring TLS certs, self-signed certs, cleartext protocols (telnet, FTP, VNC), unknown new devices. State issues auto-resolve when fixed; one-shot events (new device) stay until dismissed.
+- **Scans** — manual "Scan now" + cron-scheduled scans. History with status, duration, and host counts. Live status polling while a scan is running. Default nmap args run `--script default,vulners` for deep service info.
 - **Change detection** — every scan diffs against current state and writes events: new hosts, host up/down, ports opening/closing, service version changes.
 - **Notes & labels** — annotate devices ("kid's laptop", "IoT — quarantine") so you remember what you're looking at six months from now.
 

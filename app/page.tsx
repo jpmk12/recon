@@ -1,9 +1,15 @@
 import Link from "next/link";
 import { dashboardStats, listRecentEvents } from "@/lib/queries";
+import {
+  issueCountsBySeverity,
+  listOpenIssues,
+} from "@/lib/issues";
 import StatCard from "@/components/StatCard";
 import ServicesChart from "@/components/ServicesChart";
 import EventRow from "@/components/EventRow";
 import ScanNowButton from "@/components/ScanNowButton";
+import SeverityBadge from "@/components/SeverityBadge";
+import IssueList from "@/components/IssueList";
 
 export const dynamic = "force-dynamic";
 
@@ -17,7 +23,12 @@ function timeAgo(ts: number) {
 
 export default function DashboardPage() {
   const { totals, topServices, vendors, lastScan } = dashboardStats();
-  const events = listRecentEvents(15);
+  const events = listRecentEvents(10);
+  const issueCounts = issueCountsBySeverity();
+  const issueTotal = Object.values(issueCounts).reduce((a, b) => a + b, 0);
+  const topIssues = listOpenIssues(6);
+  const hasHighOrCrit = issueCounts.critical + issueCounts.high > 0;
+
   return (
     <div className="p-8 max-w-7xl">
       <header className="flex items-center justify-between mb-8">
@@ -32,10 +43,28 @@ export default function DashboardPage() {
         <ScanNowButton />
       </header>
 
-      <div className="grid grid-cols-4 gap-4 mb-8">
-        <StatCard label="Hosts up" value={totals.hosts_up} sub={`of ${totals.hosts_total} known`} accent="accent2" />
+      <div className="grid grid-cols-5 gap-4 mb-8">
+        <StatCard
+          label="Hosts up"
+          value={totals.hosts_up}
+          sub={`of ${totals.hosts_total} known`}
+          accent="accent2"
+        />
         <StatCard label="Open ports" value={totals.ports_open} accent="accent" />
         <StatCard label="Services" value={totals.services} accent="warn" />
+        <StatCard
+          label="Open issues"
+          value={issueTotal}
+          accent={hasHighOrCrit ? "danger" : issueTotal > 0 ? "warn" : "accent2"}
+        >
+          <div className="flex gap-1 flex-wrap mt-2">
+            {(["critical", "high", "medium", "low", "info"] as const).map((s) =>
+              issueCounts[s] > 0 ? (
+                <SeverityBadge key={s} severity={s} count={issueCounts[s]} />
+              ) : null
+            )}
+          </div>
+        </StatCard>
         <StatCard
           label="Last scan"
           value={lastScan ? lastScan.status : "—"}
@@ -72,26 +101,39 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      <div className="card p-5">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-sm uppercase tracking-wider text-muted">
-            Recent changes
-          </h2>
-          <Link href="/devices" className="text-xs text-accent hover:underline">
-            View devices →
-          </Link>
+      <div className="grid grid-cols-2 gap-4">
+        <div className="card p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm uppercase tracking-wider text-muted">
+              Top issues
+            </h2>
+            <Link href="/issues" className="text-xs text-accent hover:underline">
+              View all →
+            </Link>
+          </div>
+          <IssueList issues={topIssues} />
         </div>
-        {events.length === 0 ? (
-          <p className="text-sm text-muted">
-            No activity yet. Changes will appear here after the next scan.
-          </p>
-        ) : (
-          <ul className="divide-y divide-border">
-            {events.map((e) => (
-              <EventRow key={e.id} event={e} />
-            ))}
-          </ul>
-        )}
+        <div className="card p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm uppercase tracking-wider text-muted">
+              Recent changes
+            </h2>
+            <Link href="/devices" className="text-xs text-accent hover:underline">
+              View devices →
+            </Link>
+          </div>
+          {events.length === 0 ? (
+            <p className="text-sm text-muted">
+              No activity yet. Changes will appear here after the next scan.
+            </p>
+          ) : (
+            <ul className="divide-y divide-border">
+              {events.map((e) => (
+                <EventRow key={e.id} event={e} />
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
     </div>
   );

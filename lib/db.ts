@@ -53,6 +53,26 @@ function migrate() {
       UNIQUE (host_id, port, protocol)
     );
 
+    CREATE TABLE IF NOT EXISTS port_scripts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      port_id INTEGER NOT NULL,
+      script_id TEXT NOT NULL,
+      output TEXT NOT NULL,
+      updated_at INTEGER NOT NULL,
+      FOREIGN KEY (port_id) REFERENCES ports(id) ON DELETE CASCADE,
+      UNIQUE (port_id, script_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS host_scripts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      host_id INTEGER NOT NULL,
+      script_id TEXT NOT NULL,
+      output TEXT NOT NULL,
+      updated_at INTEGER NOT NULL,
+      FOREIGN KEY (host_id) REFERENCES hosts(id) ON DELETE CASCADE,
+      UNIQUE (host_id, script_id)
+    );
+
     CREATE TABLE IF NOT EXISTS scans (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       target TEXT NOT NULL,
@@ -77,6 +97,22 @@ function migrate() {
       FOREIGN KEY (host_id) REFERENCES hosts(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS issues (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      host_id INTEGER NOT NULL,
+      port_id INTEGER NOT NULL DEFAULT 0,
+      code TEXT NOT NULL,
+      severity TEXT NOT NULL,
+      title TEXT NOT NULL,
+      detail TEXT,
+      kind TEXT NOT NULL DEFAULT 'state',
+      first_seen INTEGER NOT NULL,
+      last_seen INTEGER NOT NULL,
+      resolved_at INTEGER,
+      FOREIGN KEY (host_id) REFERENCES hosts(id) ON DELETE CASCADE,
+      UNIQUE (host_id, port_id, code)
+    );
+
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -86,16 +122,22 @@ function migrate() {
     CREATE INDEX IF NOT EXISTS idx_hosts_hostname ON hosts(hostname);
     CREATE INDEX IF NOT EXISTS idx_ports_host ON ports(host_id);
     CREATE INDEX IF NOT EXISTS idx_ports_service ON ports(service);
+    CREATE INDEX IF NOT EXISTS idx_port_scripts_port ON port_scripts(port_id);
     CREATE INDEX IF NOT EXISTS idx_events_host ON events(host_id);
     CREATE INDEX IF NOT EXISTS idx_events_at ON events(at);
+    CREATE INDEX IF NOT EXISTS idx_issues_host ON issues(host_id);
+    CREATE INDEX IF NOT EXISTS idx_issues_open ON issues(resolved_at);
+    CREATE INDEX IF NOT EXISTS idx_issues_severity ON issues(severity);
   `);
 
-  // Seed default settings
   const setIfMissing = db.prepare(
     "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)"
   );
   setIfMissing.run("subnets", "192.168.1.0/24");
-  setIfMissing.run("nmap_args", "-sV -T4 --top-ports 1000");
+  setIfMissing.run(
+    "nmap_args",
+    "-sV -T4 --top-ports 1000 --script default,vulners"
+  );
   setIfMissing.run("schedule_cron", "0 */6 * * *");
   setIfMissing.run("schedule_enabled", "false");
   setIfMissing.run("nmap_path", "nmap");
@@ -149,6 +191,30 @@ export type Event = {
   kind: string;
   detail: string | null;
   at: number;
+};
+
+export type Severity = "critical" | "high" | "medium" | "low" | "info";
+
+export type Issue = {
+  id: number;
+  host_id: number;
+  port_id: number;
+  code: string;
+  severity: Severity;
+  title: string;
+  detail: string | null;
+  kind: "state" | "event";
+  first_seen: number;
+  last_seen: number;
+  resolved_at: number | null;
+};
+
+export type PortScript = {
+  id: number;
+  port_id: number;
+  script_id: string;
+  output: string;
+  updated_at: number;
 };
 
 export function getSetting(key: string, fallback = ""): string {
