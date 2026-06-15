@@ -1,12 +1,15 @@
 import cron, { ScheduledTask } from "node-cron";
 import { getSetting } from "./db";
 import { startScan } from "./scans";
+import { runRetention } from "./retention";
 
 declare global {
   // eslint-disable-next-line no-var
   var __reconScheduler:
     | { task: ScheduledTask | null; cronExpr: string; enabled: boolean }
     | undefined;
+  // eslint-disable-next-line no-var
+  var __reconRetentionTask: ScheduledTask | null | undefined;
 }
 
 export function refreshSchedule() {
@@ -38,5 +41,25 @@ export function refreshSchedule() {
   global.__reconScheduler = state;
 }
 
-// Auto-initialize on import (Next.js server runtime).
+function startRetentionTask() {
+  if (global.__reconRetentionTask) return;
+  // Nightly at 03:17 local — slightly off the hour to avoid colliding
+  // with other cron jobs.
+  global.__reconRetentionTask = cron.schedule("17 3 * * *", () => {
+    try {
+      const { events, issues, scans } = runRetention();
+      if (events > 0 || issues > 0 || scans > 0) {
+        console.log(
+          `[retention] purged ${events} events, ${issues} issues, ${scans} scans`
+        );
+      }
+    } catch (e) {
+      console.warn(
+        `[retention] failed: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+  });
+}
+
 refreshSchedule();
+startRetentionTask();

@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { Scan } from "@/lib/db";
 
@@ -56,19 +57,20 @@ export default function ScanList({ scans }: { scans: Scan[] }) {
               className="border-b border-border last:border-0 hover:bg-bg/40"
             >
               <td className="px-4 py-3">
-                <span
+                <Link
+                  href={`/scans/${s.id}`}
                   className={
                     s.status === "ok"
-                      ? "text-accent2"
+                      ? "text-accent2 hover:underline"
                       : s.status === "running"
-                      ? "text-warn"
+                      ? "text-warn hover:underline"
                       : s.status === "error"
-                      ? "text-danger"
-                      : "text-muted"
+                      ? "text-danger hover:underline"
+                      : "text-muted hover:underline"
                   }
                 >
                   {s.status}
-                </span>
+                </Link>
                 {s.error && (
                   <div
                     className="text-xs text-danger truncate max-w-xs"
@@ -78,7 +80,9 @@ export default function ScanList({ scans }: { scans: Scan[] }) {
                   </div>
                 )}
               </td>
-              <td className="px-4 py-3 font-mono">{s.target}</td>
+              <td className="px-4 py-3 font-mono truncate max-w-[280px]" title={s.target}>
+                {s.target}
+              </td>
               <td className="px-4 py-3 text-muted">{s.source}</td>
               <td className="px-4 py-3 text-muted">{fmt(s.started_at)}</td>
               <td className="px-4 py-3 text-right text-muted">{dur(s)}</td>

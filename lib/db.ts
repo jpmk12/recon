@@ -21,6 +21,14 @@ if (!global.__reconDb) {
   migrate();
 }
 
+function tryExec(sql: string) {
+  try {
+    db.exec(sql);
+  } catch {
+    // ignore "duplicate column" errors on re-run
+  }
+}
+
 function migrate() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS hosts (
@@ -125,10 +133,15 @@ function migrate() {
     CREATE INDEX IF NOT EXISTS idx_port_scripts_port ON port_scripts(port_id);
     CREATE INDEX IF NOT EXISTS idx_events_host ON events(host_id);
     CREATE INDEX IF NOT EXISTS idx_events_at ON events(at);
+    CREATE INDEX IF NOT EXISTS idx_events_scan ON events(scan_id);
     CREATE INDEX IF NOT EXISTS idx_issues_host ON issues(host_id);
     CREATE INDEX IF NOT EXISTS idx_issues_open ON issues(resolved_at);
     CREATE INDEX IF NOT EXISTS idx_issues_severity ON issues(severity);
   `);
+
+  // Idempotent column additions for upgrades from earlier versions.
+  tryExec(`ALTER TABLE hosts ADD COLUMN category TEXT`);
+  tryExec(`ALTER TABLE issues ADD COLUMN snoozed_until INTEGER`);
 
   const setIfMissing = db.prepare(
     "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)"
@@ -141,7 +154,30 @@ function migrate() {
   setIfMissing.run("schedule_cron", "0 */6 * * *");
   setIfMissing.run("schedule_enabled", "false");
   setIfMissing.run("nmap_path", "nmap");
+  setIfMissing.run("mdns_enabled", "true");
+  setIfMissing.run("ntfy_url", "");
+  setIfMissing.run("ntfy_topic", "");
+  setIfMissing.run("webhook_url", "");
+  setIfMissing.run("notify_severity_min", "high");
+  setIfMissing.run("notify_on_new_device", "true");
+  setIfMissing.run("event_retention_days", "90");
+  setIfMissing.run("auth_password_hash", "");
+  setIfMissing.run("auth_session_token", "");
 }
+
+export type Category =
+  | "router"
+  | "nas"
+  | "printer"
+  | "camera"
+  | "voice"
+  | "iot"
+  | "phone"
+  | "server"
+  | "laptop"
+  | "tv"
+  | "gaming"
+  | "unknown";
 
 export type Host = {
   id: number;
@@ -155,6 +191,7 @@ export type Host = {
   is_up: number;
   label: string | null;
   notes: string | null;
+  category: Category | null;
 };
 
 export type Port = {
@@ -207,6 +244,7 @@ export type Issue = {
   first_seen: number;
   last_seen: number;
   resolved_at: number | null;
+  snoozed_until: number | null;
 };
 
 export type PortScript = {
@@ -229,3 +267,11 @@ export function setSetting(key: string, value: string) {
     "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
   ).run(key, value);
 }
+
+export const SEVERITY_RANK: Record<Severity, number> = {
+  critical: 0,
+  high: 1,
+  medium: 2,
+  low: 3,
+  info: 4,
+};

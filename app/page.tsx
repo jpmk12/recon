@@ -1,9 +1,8 @@
 import Link from "next/link";
+import { ensureAuth } from "@/lib/auth";
 import { dashboardStats, listRecentEvents } from "@/lib/queries";
-import {
-  issueCountsBySeverity,
-  listOpenIssues,
-} from "@/lib/issues";
+import { issueCountsBySeverity, listOpenIssues } from "@/lib/issues";
+import { CATEGORY_LABELS } from "@/lib/classify";
 import StatCard from "@/components/StatCard";
 import ServicesChart from "@/components/ServicesChart";
 import EventRow from "@/components/EventRow";
@@ -21,8 +20,9 @@ function timeAgo(ts: number) {
   return `${Math.floor(s / 86400)}d ago`;
 }
 
-export default function DashboardPage() {
-  const { totals, topServices, vendors, lastScan } = dashboardStats();
+export default async function DashboardPage() {
+  await ensureAuth();
+  const { totals, topServices, vendors, categories, lastScan } = dashboardStats();
   const events = listRecentEvents(10);
   const issueCounts = issueCountsBySeverity();
   const issueTotal = Object.values(issueCounts).reduce((a, b) => a + b, 0);
@@ -82,6 +82,33 @@ export default function DashboardPage() {
         </div>
         <div className="card p-5">
           <h2 className="text-sm uppercase tracking-wider text-muted mb-4">
+            Categories
+          </h2>
+          <ul className="space-y-2">
+            {categories.length === 0 && (
+              <li className="text-sm text-muted">No devices yet.</li>
+            )}
+            {categories.map((c) => (
+              <li
+                key={c.category}
+                className="flex justify-between text-sm border-b border-border pb-2 last:border-0"
+              >
+                <Link
+                  href={`/devices?category=${c.category}`}
+                  className="hover:text-accent truncate pr-2"
+                >
+                  {CATEGORY_LABELS[c.category] ?? c.category}
+                </Link>
+                <span className="text-muted">{c.count}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-3 gap-4 mb-8">
+        <div className="card p-5">
+          <h2 className="text-sm uppercase tracking-wider text-muted mb-4">
             Vendors
           </h2>
           <ul className="space-y-2">
@@ -99,10 +126,7 @@ export default function DashboardPage() {
             ))}
           </ul>
         </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-4">
-        <div className="card p-5">
+        <div className="card p-5 col-span-2">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-sm uppercase tracking-wider text-muted">
               Top issues
@@ -113,27 +137,28 @@ export default function DashboardPage() {
           </div>
           <IssueList issues={topIssues} />
         </div>
-        <div className="card p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm uppercase tracking-wider text-muted">
-              Recent changes
-            </h2>
-            <Link href="/devices" className="text-xs text-accent hover:underline">
-              View devices →
-            </Link>
-          </div>
-          {events.length === 0 ? (
-            <p className="text-sm text-muted">
-              No activity yet. Changes will appear here after the next scan.
-            </p>
-          ) : (
-            <ul className="divide-y divide-border">
-              {events.map((e) => (
-                <EventRow key={e.id} event={e} />
-              ))}
-            </ul>
-          )}
+      </div>
+
+      <div className="card p-5">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm uppercase tracking-wider text-muted">
+            Recent changes
+          </h2>
+          <Link href="/devices" className="text-xs text-accent hover:underline">
+            View devices →
+          </Link>
         </div>
+        {events.length === 0 ? (
+          <p className="text-sm text-muted">
+            No activity yet. Changes will appear here after the next scan.
+          </p>
+        ) : (
+          <ul className="divide-y divide-border">
+            {events.map((e) => (
+              <EventRow key={e.id} event={e} />
+            ))}
+          </ul>
+        )}
       </div>
     </div>
   );

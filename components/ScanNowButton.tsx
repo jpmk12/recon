@@ -16,6 +16,13 @@ export default function ScanNowButton() {
         headers: { "Content-Type": "application/json" },
         body: "{}",
       });
+      if (r.status === 409) {
+        const body = await r.json().catch(() => ({}));
+        setErr(body.error ?? "a scan is already running");
+        if (body.id) poll(Number(body.id));
+        else setBusy(false);
+        return;
+      }
       if (!r.ok) throw new Error(await r.text());
       const { id } = await r.json();
       poll(id);

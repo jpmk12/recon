@@ -1,7 +1,9 @@
 import Link from "next/link";
 import type { Host } from "@/lib/db";
+import CategoryBadge from "./CategoryBadge";
 
 function ipSortKey(ip: string) {
+  if (ip.includes(":")) return ip;
   return ip
     .split(".")
     .map((n) => n.padStart(3, "0"))
@@ -36,6 +38,7 @@ export default function DeviceTable({ hosts }: { hosts: Host[] }) {
             <th className="text-left px-4 py-3">Status</th>
             <th className="text-left px-4 py-3">IP</th>
             <th className="text-left px-4 py-3">Hostname</th>
+            <th className="text-left px-4 py-3">Category</th>
             <th className="text-left px-4 py-3">Vendor / OS</th>
             <th className="text-left px-4 py-3">Label</th>
             <th className="text-right px-4 py-3">Seen</th>
@@ -64,6 +67,9 @@ export default function DeviceTable({ hosts }: { hosts: Host[] }) {
               </td>
               <td className="px-4 py-3 truncate max-w-[200px]">
                 {h.hostname ?? <span className="text-muted">—</span>}
+              </td>
+              <td className="px-4 py-3">
+                <CategoryBadge category={h.category} />
               </td>
               <td className="px-4 py-3 text-muted truncate max-w-[260px]">
                 {[h.vendor, h.os].filter(Boolean).join(" · ") || "—"}

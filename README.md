@@ -13,12 +13,16 @@ scan history, change detection, and per-device notes.
 
 ## Features
 
-- **Dashboard** — hosts up, open ports, services breakdown, top vendors, open issues by severity, recent changes.
-- **Devices** — searchable table (IP, hostname, MAC, vendor, OS, label, service, port). Per-device detail page with ports, full history, open issues, and editable notes/label.
-- **Issues** — problems detected from nmap NSE script output and service heuristics: known CVEs (via `vulners`), expired/expiring TLS certs, self-signed certs, cleartext protocols (telnet, FTP, VNC), unknown new devices. State issues auto-resolve when fixed; one-shot events (new device) stay until dismissed.
-- **Scans** — manual "Scan now" + cron-scheduled scans. History with status, duration, and host counts. Live status polling while a scan is running. Default nmap args run `--script default,vulners` for deep service info.
+- **Dashboard** — hosts up, open ports, services breakdown, top vendors, device categories, open issues by severity, recent changes.
+- **Devices** — searchable, filterable table (status, category, has-open-issues). Per-device detail page with ports, full NSE script output, history, open issues, and editable notes/label. CSV export.
+- **Device classification** — heuristic auto-tag: router / NAS / printer / camera / smart speaker / IoT / phone / server / computer / TV / gaming.
+- **Issues** — problems detected from NSE output and service heuristics: known CVEs (via `vulners`), expired/expiring TLS certs, self-signed certs, weak TLS versions/ciphers, weak SSH algorithms, SMBv1, cleartext protocols (telnet, FTP, VNC), generic NSE "VULNERABLE" matches, unknown new devices. State issues auto-resolve when fixed; events (new device) persist until dismissed. Snooze for 1h / 1d / 7d.
+- **Notifications** — ntfy.sh push and JSON webhook for newly-opened issues at or above your configured severity, and for unknown new devices. Test button.
+- **Scans** — manual "Scan now" + cron-scheduled scans. Concurrency guard prevents overlapping runs. Multi-subnet targets. Per-scan detail page shows that scan's events. Default nmap args run `--script default,vulners` for deep service info. Optional mDNS/Bonjour discovery pass after each scan.
 - **Change detection** — every scan diffs against current state and writes events: new hosts, host up/down, ports opening/closing, service version changes.
 - **Notes & labels** — annotate devices ("kid's laptop", "IoT — quarantine") so you remember what you're looking at six months from now.
+- **Authentication** — optional password protection (bcrypt, server-side session token). Off by default; turn on in Settings.
+- **Retention** — events, resolved issues, and finished scans older than N days are purged nightly.
 
 ## Running
 
@@ -70,18 +74,35 @@ Settings live in SQLite and are editable from `/settings`:
 
 | Key | Default | Notes |
 |-----|---------|-------|
-| `subnets` | `192.168.1.0/24` | Any nmap target spec |
-| `nmap_args` | `-sV -T4 --top-ports 1000` | `-oX` is appended automatically |
+| `subnets` | `192.168.1.0/24` | Space, comma, or newline separated — multiple targets supported |
+| `nmap_args` | `-sV -T4 --top-ports 1000 --script default,vulners` | `-oX` is appended automatically |
 | `nmap_path` | `nmap` | Override if not on `$PATH` (e.g. `C:\Program Files (x86)\Nmap\nmap.exe` on Windows) |
 | `schedule_cron` | `0 */6 * * *` | Standard 5-field cron |
 | `schedule_enabled` | `false` | Toggle from settings page |
+| `mdns_enabled` | `true` | Run a brief Bonjour pass after nmap to pick up Chromecasts, AirPlay, printers |
+| `ntfy_url` / `ntfy_topic` | empty | ntfy.sh push target; e.g. `https://ntfy.sh` + a random topic |
+| `webhook_url` | empty | JSON POST endpoint for notifications |
+| `notify_severity_min` | `high` | Severity threshold for issue notifications |
+| `notify_on_new_device` | `true` | Notify when an unknown MAC appears |
+| `event_retention_days` | `90` | Older events, resolved issues, and scans are purged nightly |
+
+## Security notes
+
+This app is intended for **trusted home LAN use**. By default it has no
+authentication — anyone who can reach the port can see the entire inventory,
+issues, and credentials-relevant detail. Set a password in **Settings →
+Authentication** for any deployment beyond a fully-trusted network.
+
+Webhook and ntfy URLs are user-configurable and the server fetches them
+unauthenticated — when auth is off, anyone on your LAN who reaches the app
+can point those at internal endpoints. Set the password.
 
 ## Data layout
 
 ```
 data/
-  recon.db        # SQLite (hosts, ports, scans, events, settings)
+  recon.db        # SQLite (hosts, ports, scans, events, issues, settings)
   scans/          # Raw nmap XML, one file per run
 ```
 
-Wipe with `rm -rf data/` to start fresh.
+Wipe with `rm -rf data/` to start fresh, or use Settings → Danger zone.

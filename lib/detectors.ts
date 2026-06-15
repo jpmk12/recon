@@ -1,7 +1,7 @@
 import { db, Severity } from "./db";
 
 export type IssueCandidate = {
-  port_id: number; // 0 = host-level
+  port_id: number;
   code: string;
   severity: Severity;
   title: string;
@@ -20,11 +20,6 @@ type OpenPortRow = {
 const cveSeverity = (cvss: number): Severity =>
   cvss >= 9 ? "critical" : cvss >= 7 ? "high" : cvss >= 4 ? "medium" : "low";
 
-/**
- * Read current open ports + their nmap NSE script output for a host,
- * then derive issues. Idempotent — re-running on the same DB state
- * yields the same set.
- */
 export function detectIssuesForHost(hostId: number): IssueCandidate[] {
   const ports = db
     .prepare(
@@ -47,7 +42,19 @@ export function detectIssuesForHost(hostId: number): IssueCandidate[] {
     issues.push(...detectFromService(p));
     issues.push(...detectFromScripts(p, scripts));
   }
-  return issues;
+  return dedupe(issues);
+}
+
+function dedupe(issues: IssueCandidate[]): IssueCandidate[] {
+  const seen = new Set<string>();
+  const out: IssueCandidate[] = [];
+  for (const i of issues) {
+    const k = `${i.port_id}:${i.code}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(i);
+  }
+  return out;
 }
 
 function detectFromService(p: OpenPortRow): IssueCandidate[] {
@@ -55,7 +62,7 @@ function detectFromService(p: OpenPortRow): IssueCandidate[] {
   const service = (p.service ?? "").toLowerCase();
   const where = `${p.port}/${p.protocol}`;
 
-  if (service === "telnet" || p.port === 23) {
+  if (service === "telnet" || (p.port === 23 && p.protocol === "tcp")) {
     out.push({
       port_id: p.id,
       code: "service.telnet",
@@ -65,8 +72,8 @@ function detectFromService(p: OpenPortRow): IssueCandidate[] {
     });
   }
   if (
-    (service === "ftp" || (p.port === 21 && !service)) &&
-    !service.includes("ftps")
+    service === "ftp" ||
+    (p.port === 21 && p.protocol === "tcp" && !service.includes("ftps"))
   ) {
     out.push({
       port_id: p.id,
@@ -82,16 +89,16 @@ function detectFromService(p: OpenPortRow): IssueCandidate[] {
       code: "service.vnc",
       severity: "high",
       title: "VNC exposed",
-      detail: `VNC on ${where} is often unauthenticated or weakly authenticated. Restrict to localhost or tunnel via SSH.`,
+      detail: `VNC on ${where} is often unauthenticated. Restrict to localhost or tunnel via SSH.`,
     });
   }
-  if (service === "rdp" || p.port === 3389) {
+  if (service === "rdp" || (p.port === 3389 && p.protocol === "tcp")) {
     out.push({
       port_id: p.id,
       code: "service.rdp-lan",
       severity: "low",
       title: "RDP exposed on LAN",
-      detail: `RDP on ${where}. Ensure NLA is required and patches are current; prefer VPN access.`,
+      detail: `RDP on ${where}. Ensure NLA is required and patches are current.`,
     });
   }
   return out;
@@ -141,16 +148,61 @@ function detectFromScripts(
         code: "tls.self-signed",
         severity: "info",
         title: "Self-signed TLS certificate",
-        detail: `Cert on ${p.port}/${p.protocol} is self-signed. Often fine on LAN — flagged for visibility.`,
+        detail: `Cert on ${p.port}/${p.protocol} is self-signed.`,
       });
     }
+  }
+
+  const sslEnum = scripts.get("ssl-enum-ciphers");
+  if (sslEnum) {
+    if (/SSLv2|SSLv3|TLSv1\.0|TLSv1\.1/.test(sslEnum)) {
+      out.push({
+        port_id: p.id,
+        code: "tls.weak-version",
+        severity: "medium",
+        title: "Deprecated TLS protocol enabled",
+        detail: `Service on ${p.port}/${p.protocol} accepts SSLv2/v3 or TLS 1.0/1.1.`,
+      });
+    }
+    if (/RC4|3DES|EXPORT|NULL|MD5/.test(sslEnum)) {
+      out.push({
+        port_id: p.id,
+        code: "tls.weak-cipher",
+        severity: "medium",
+        title: "Weak TLS cipher available",
+        detail: `${p.port}/${p.protocol} advertises RC4, 3DES, EXPORT, or other weak ciphers.`,
+      });
+    }
+  }
+
+  const sshAlgos = scripts.get("ssh2-enum-algos");
+  if (sshAlgos) {
+    if (/ssh-dss|ssh-rsa\s/.test(sshAlgos) || /diffie-hellman-group1-sha1/.test(sshAlgos)) {
+      out.push({
+        port_id: p.id,
+        code: "ssh.weak-algo",
+        severity: "low",
+        title: "Weak SSH algorithm offered",
+        detail: `SSH on ${p.port}/${p.protocol} offers DSA host keys or DH group1 — disable in sshd_config.`,
+      });
+    }
+  }
+
+  const smbProtocols = scripts.get("smb-protocols") ?? scripts.get("smb-os-discovery");
+  if (smbProtocols && /SMBv1|NT LM 0\.12|2\.02/i.test(smbProtocols)) {
+    out.push({
+      port_id: p.id,
+      code: "smb.v1",
+      severity: "high",
+      title: "SMBv1 enabled",
+      detail: `${p.port}/${p.protocol} accepts SMBv1. Vulnerable to EternalBlue and similar. Disable it.`,
+    });
   }
 
   const vulners = scripts.get("vulners");
   if (vulners) {
     const seen = new Set<string>();
-    const lines = vulners.split(/\r?\n/);
-    for (const line of lines) {
+    for (const line of vulners.split(/\r?\n/)) {
       const m = line.match(/(CVE-\d{4}-\d{4,7})\s+(\d+(?:\.\d+)?)/);
       if (!m) continue;
       const cve = m[1];
@@ -169,20 +221,38 @@ function detectFromScripts(
     }
   }
 
+  // Catch-all: any NSE script output that contains a VULNERABLE marker.
+  for (const [scriptId, output] of scripts) {
+    if (scriptId === "vulners") continue;
+    if (/\bVULNERABLE\b/i.test(output)) {
+      const firstLine = output.split(/\r?\n/).find((l) => /VULNERABLE/i.test(l));
+      out.push({
+        port_id: p.id,
+        code: `nse.${scriptId}`,
+        severity: "high",
+        title: `${scriptId} reports vulnerability`,
+        detail: (firstLine ?? "").trim().slice(0, 240),
+      });
+    }
+  }
+
   return out;
 }
 
 /**
- * Persist detected state issues for a host. Re-detected issues bump
- * last_seen and clear resolved_at; previously-open state issues that
- * did not re-detect are marked resolved. Event-kind issues (e.g.
- * device.new) are never auto-resolved here.
+ * Persist detected state issues. Returns the subset that newly transitioned
+ * into the open state (newly inserted, or previously resolved and now
+ * re-opened) so the caller can fire notifications without re-spamming on
+ * repeat re-detection.
  */
 export function reconcileStateIssues(
   hostId: number,
   detected: IssueCandidate[],
   now: number
-) {
+): IssueCandidate[] {
+  const lookup = db.prepare(
+    "SELECT resolved_at FROM issues WHERE host_id=? AND port_id=? AND code=?"
+  );
   const upsert = db.prepare(`
     INSERT INTO issues (host_id, port_id, code, severity, title, detail, kind, first_seen, last_seen)
     VALUES (@host_id, @port_id, @code, @severity, @title, @detail, 'state', @now, @now)
@@ -193,8 +263,13 @@ export function reconcileStateIssues(
       last_seen= excluded.last_seen,
       resolved_at = NULL
   `);
+  const fired: IssueCandidate[] = [];
   const seen = new Set<string>();
   for (const i of detected) {
+    const prior = lookup.get(hostId, i.port_id, i.code) as
+      | { resolved_at: number | null }
+      | undefined;
+    const isNewOpen = !prior || prior.resolved_at !== null;
     upsert.run({
       host_id: hostId,
       port_id: i.port_id,
@@ -205,6 +280,7 @@ export function reconcileStateIssues(
       now,
     });
     seen.add(`${i.port_id}:${i.code}`);
+    if (isNewOpen) fired.push(i);
   }
 
   const openState = db
@@ -218,4 +294,5 @@ export function reconcileStateIssues(
       resolve.run(now, o.id);
     }
   }
+  return fired;
 }

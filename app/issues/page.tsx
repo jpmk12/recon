@@ -1,11 +1,18 @@
-import { listOpenIssues, issueCountsBySeverity } from "@/lib/issues";
+import { ensureAuth } from "@/lib/auth";
+import {
+  listOpenIssues,
+  issueCountsBySeverity,
+  listSnoozedIssues,
+} from "@/lib/issues";
 import IssueList from "@/components/IssueList";
 import SeverityBadge from "@/components/SeverityBadge";
 
 export const dynamic = "force-dynamic";
 
-export default function IssuesPage() {
+export default async function IssuesPage() {
+  await ensureAuth();
   const issues = listOpenIssues();
+  const snoozed = listSnoozedIssues();
   const counts = issueCountsBySeverity();
   const total = Object.values(counts).reduce((a, b) => a + b, 0);
   return (
@@ -30,9 +37,18 @@ export default function IssuesPage() {
         </div>
       </div>
 
-      <div className="card p-5">
+      <div className="card p-5 mb-6">
         <IssueList issues={issues} />
       </div>
+
+      {snoozed.length > 0 && (
+        <div className="card p-5">
+          <h2 className="text-sm uppercase tracking-wider text-muted mb-4">
+            Snoozed ({snoozed.length})
+          </h2>
+          <IssueList issues={snoozed} />
+        </div>
+      )}
     </div>
   );
 }

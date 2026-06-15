@@ -54,7 +54,21 @@ const fake: ParsedHost[] = [
     scripts: [],
     ports: [
       { port: 80, protocol: "tcp", state: "open", service: "http", product: "nginx", version: "1.22", scripts: [] },
-      { port: 445, protocol: "tcp", state: "open", service: "microsoft-ds", product: "Samba", version: "4.19", scripts: [] },
+      {
+        port: 445,
+        protocol: "tcp",
+        state: "open",
+        service: "microsoft-ds",
+        product: "Samba",
+        version: "4.19",
+        scripts: [
+          {
+            id: "smb-protocols",
+            output:
+              "  dialects:\n    NT LM 0.12 (SMBv1) [dangerous, but default]\n    2.02\n    2.10\n    3.00\n    3.02\n    3.11",
+          },
+        ],
+      },
       {
         port: 5001,
         protocol: "tcp",
@@ -94,6 +108,11 @@ const fake: ParsedHost[] = [
             id: "vulners",
             output:
               "cpe:/a:openbsd:openssh:7.4:\n  CVE-2020-15778  7.8  https://vulners.com/cve/CVE-2020-15778\n  CVE-2018-15473  5.3  https://vulners.com/cve/CVE-2018-15473\n  CVE-2017-15906  5.3  https://vulners.com/cve/CVE-2017-15906",
+          },
+          {
+            id: "ssh2-enum-algos",
+            output:
+              "  kex_algorithms:\n    diffie-hellman-group1-sha1\n    ecdh-sha2-nistp256\n  server_host_key_algorithms:\n    ssh-rsa\n    ssh-dss\n    ecdsa-sha2-nistp256",
           },
         ],
       },
@@ -160,8 +179,6 @@ db.prepare("UPDATE scans SET hosts_up=?, hosts_total=? WHERE id=?").run(
   scanId
 );
 
-// Second scan demonstrates change detection: smart plug comes online,
-// homelab grows a new HTTPS service.
 const scan2 = db
   .prepare(
     "INSERT INTO scans (target, args, started_at, finished_at, status, source) VALUES (?, ?, ?, ?, 'ok', 'scheduled')"
@@ -192,4 +209,4 @@ db.prepare("UPDATE scans SET hosts_up=?, hosts_total=? WHERE id=?").run(
   scan2Id
 );
 
-console.log("Seeded recon.db with sample data and demo issues.");
+console.log("Seeded recon.db with sample data, classification, and demo issues.");

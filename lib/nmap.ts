@@ -1,9 +1,10 @@
-import { spawn } from "node:child_process";
+import { spawn, ChildProcess } from "node:child_process";
 import { parseStringPromise } from "xml2js";
 import fs from "node:fs";
 import path from "node:path";
 import { db, getSetting } from "./db";
-import { detectIssuesForHost, reconcileStateIssues } from "./detectors";
+import { detectIssuesForHost, reconcileStateIssues, IssueCandidate } from "./detectors";
+import { classifyHost } from "./classify";
 
 export type ParsedScript = { id: string; output: string };
 
@@ -28,7 +29,9 @@ export type ParsedPort = {
   scripts: ParsedScript[];
 };
 
-function readScripts(node: { script?: { $: { id: string; output?: string } }[] }): ParsedScript[] {
+function readScripts(node: {
+  script?: { $: { id: string; output?: string } }[];
+}): ParsedScript[] {
   return (node.script ?? []).map((s) => ({
     id: s.$.id,
     output: s.$.output ?? "",
@@ -77,17 +80,37 @@ export async function parseNmapXml(xml: string): Promise<ParsedHost[]> {
   return out;
 }
 
+/** Split a comma/whitespace/newline separated target list into nmap arg tokens. */
+export function parseTargets(raw: string): string[] {
+  return raw
+    .split(/[\s,;]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 export async function runNmap(
   target: string,
-  argsLine: string
+  argsLine: string,
+  opts: { onProcess?: (p: ChildProcess) => void } = {}
 ): Promise<{ xml: string; stderr: string }> {
   const nmapPath = getSetting("nmap_path", "nmap");
   const outDir = path.join(process.cwd(), "data", "scans");
   fs.mkdirSync(outDir, { recursive: true });
   const xmlFile = path.join(outDir, `scan-${Date.now()}.xml`);
-  const args = [...argsLine.split(/\s+/).filter(Boolean), "-oX", xmlFile, target];
+  const targets = parseTargets(target);
+  if (targets.length === 0) throw new Error("no scan targets configured");
+  const args = [
+    ...argsLine.split(/\s+/).filter(Boolean),
+    "-oX",
+    xmlFile,
+    ...targets,
+  ];
   return new Promise((resolve, reject) => {
-    const proc = spawn(nmapPath, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const proc = spawn(nmapPath, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      shell: false,
+    });
+    opts.onProcess?.(proc);
     let stderr = "";
     proc.stderr.on("data", (d) => (stderr += d.toString()));
     proc.on("error", reject);
@@ -107,10 +130,14 @@ export async function runNmap(
   });
 }
 
+export type FiredNotification =
+  | { kind: "issue"; hostId: number; issue: IssueCandidate }
+  | { kind: "device.new"; hostId: number; ip: string; hostname: string | null; vendor: string | null };
+
 export function applyScan(
   scanId: number,
   hosts: ParsedHost[]
-): { up: number; total: number } {
+): { up: number; total: number; fired: FiredNotification[] } {
   const now = Date.now();
   const upsertHost = db.prepare(`
     INSERT INTO hosts (ip, hostname, mac, vendor, os, first_seen, last_seen, is_up)
@@ -155,8 +182,11 @@ export function applyScan(
     INSERT OR IGNORE INTO issues (host_id, port_id, code, severity, title, detail, kind, first_seen, last_seen)
     VALUES (?, 0, 'device.new', 'medium', 'Unknown device detected', ?, 'event', ?, ?)
   `);
+  const setCategory = db.prepare("UPDATE hosts SET category=? WHERE id=?");
 
+  const fired: FiredNotification[] = [];
   let up = 0;
+
   const tx = db.transaction((hostList: ParsedHost[]) => {
     for (const h of hostList) {
       const is_up = h.status === "up" ? 1 : 0;
@@ -177,12 +207,23 @@ export function applyScan(
       const host_id = hostRow.id;
       if (!prev) {
         insertEvent.run(scanId, host_id, "host_new", `IP ${h.ip} discovered`, now);
-        insertNewDeviceIssue.run(
+        const inserted = insertNewDeviceIssue.run(
           host_id,
-          `${h.ip}${h.hostname ? " (" + h.hostname + ")" : ""}${h.vendor ? " · " + h.vendor : ""}`,
+          `${h.ip}${h.hostname ? " (" + h.hostname + ")" : ""}${
+            h.vendor ? " · " + h.vendor : ""
+          }`,
           now,
           now
         );
+        if (inserted.changes > 0) {
+          fired.push({
+            kind: "device.new",
+            hostId: host_id,
+            ip: h.ip,
+            hostname: h.hostname,
+            vendor: h.vendor,
+          });
+        }
       } else if (prev.is_up !== is_up) {
         insertEvent.run(
           scanId,
@@ -276,10 +317,25 @@ export function applyScan(
       }
       closeMissingPorts.run(now, host_id, JSON.stringify(seenPortIds));
 
+      const openPorts = db
+        .prepare(
+          "SELECT port, service FROM ports WHERE host_id=? AND is_open=1"
+        )
+        .all(host_id) as { port: number; service: string | null }[];
+      const category = classifyHost({
+        vendor: h.vendor,
+        os: h.os,
+        ports: openPorts,
+      });
+      setCategory.run(category, host_id);
+
       const detected = detectIssuesForHost(host_id);
-      reconcileStateIssues(host_id, detected, now);
+      const newlyOpened = reconcileStateIssues(host_id, detected, now);
+      for (const i of newlyOpened) {
+        fired.push({ kind: "issue", hostId: host_id, issue: i });
+      }
     }
   });
   tx(hosts);
-  return { up, total: hosts.length };
+  return { up, total: hosts.length, fired };
 }

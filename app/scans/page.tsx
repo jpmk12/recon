@@ -1,10 +1,12 @@
+import { ensureAuth } from "@/lib/auth";
 import { listScans } from "@/lib/queries";
 import ScanNowButton from "@/components/ScanNowButton";
 import ScanList from "@/components/ScanList";
 
 export const dynamic = "force-dynamic";
 
-export default function ScansPage() {
+export default async function ScansPage() {
+  await ensureAuth();
   const scans = listScans(100);
   return (
     <div className="p-8 max-w-7xl">
