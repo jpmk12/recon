@@ -8,6 +8,8 @@ new shows up — all from a searchable dark-themed web UI you run yourself.
 It's the answer to "what's on my network, what's it running, and is any of
 it broken?"
 
+![recon dashboard — hosts up, services, open issues by severity, top issues including CVEs and SMBv1, recent network changes](docs/dashboard.svg)
+
 ---
 
 ## What's in the box
